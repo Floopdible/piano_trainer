@@ -33,6 +33,8 @@ class PianoTrainerApp {
     this.waitingForNotes = false;
 
     this.audioCtx = null;
+    this.pianoPlayer = null;
+    this.pianoLoading = false;
     this.playbackNotes = new Map();
     this.soundEnabled = true;
     this.soundedNotes = new Map();
@@ -94,12 +96,21 @@ class PianoTrainerApp {
 
   _initEventListeners() {
     // File loading
-    this.loadBtn.addEventListener('click', () => this.fileInput.click());
+    this.loadBtn.addEventListener('click', () => {
+      this._onUserGesture();
+      this.fileInput.click();
+    });
     this.fileInput.addEventListener('change', (e) => this._handleFileLoad(e));
-    document.getElementById('btn-load-welcome')?.addEventListener('click', () => this.fileInput.click());
+    document.getElementById('btn-load-welcome')?.addEventListener('click', () => {
+      this._onUserGesture();
+      this.fileInput.click();
+    });
 
     // Transport controls
-    this.playPauseBtn.addEventListener('click', () => this._togglePlay());
+    this.playPauseBtn.addEventListener('click', () => {
+      this._onUserGesture();
+      this._togglePlay();
+    });
     this.skipStartBtn.addEventListener('click', () => this._seek(0));
     this.skipBackBtn.addEventListener('click', () => this._seek(Math.max(0, this.currentTime - 5)));
     this.skipForwardBtn.addEventListener('click', () => {
@@ -110,7 +121,10 @@ class PianoTrainerApp {
     });
 
     // Mic
-    this.micBtn.addEventListener('click', () => this._toggleMic());
+    this.micBtn.addEventListener('click', () => {
+      this._onUserGesture();
+      this._toggleMic();
+    });
 
     // Sheet toggle
     this.sheetBtn.addEventListener('click', () => this._toggleSheet());
@@ -238,6 +252,7 @@ class PianoTrainerApp {
       if (this.isDragging) return;
       const noteNum = this.pianoRenderer.hitTest(e.clientX, e.clientY);
       if (noteNum >= 0) {
+        this._onUserGesture();
         this.pianoRenderer.setPressed(noteNum, true);
         this._playPreviewNote(noteNum);
       }
@@ -336,6 +351,11 @@ class PianoTrainerApp {
     if (file) await this._loadFile(file);
   }
 
+  _onUserGesture() {
+    this._ensureAudio();
+    this._ensurePianoLoaded();
+  }
+
   async _loadFile(file) {
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -349,6 +369,7 @@ class PianoTrainerApp {
       this._stop();
       this._resetScore();
       this._updateUI();
+      this._ensurePianoLoaded();
 
       console.log('MIDI loaded:', {
         format: this.midiData.header.format,
@@ -410,6 +431,7 @@ class PianoTrainerApp {
   _seek(time) {
     if (!this.midiData) return;
     this.currentTime = Math.max(0, Math.min(this.midiData.duration, time));
+    this._ensureAudio();
     if (this.isPlaying && !this.isPaused) {
       this.startTimestamp = performance.now() - (this.currentTime * 1000 / this.playbackSpeed);
     }
@@ -650,9 +672,7 @@ class PianoTrainerApp {
   }
 
   _updateMidiSound() {
-    if (!this.audioCtx) {
-      this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
+    this._ensureAudio();
 
     const now = this.currentTime;
     const lookahead = 0.05;
@@ -680,13 +700,20 @@ class PianoTrainerApp {
   }
 
   _playMidiNote(noteNum, velocity, duration) {
-    if (!this.audioCtx) return;
+    this._ensureAudio();
+    if (this.pianoPlayer) {
+      this.pianoPlayer.play(noteNum, this.audioCtx.currentTime, {
+        duration: Math.min(duration, 4),
+        gain: Math.max(0.05, velocity * 0.3),
+      });
+      return;
+    }
+
+    // Fallback: harmonic stack oscillator
     const freq = midiToFrequency(noteNum);
     const now = this.audioCtx.currentTime;
     const dur = Math.min(duration, 3);
     const vol = Math.max(0.02, velocity * 0.2);
-
-    // Low frequency compensation: boost volume as pitch drops
     const lowBoost = Math.max(1, Math.pow(100 / freq, 0.35));
     const finalVol = Math.min(1, vol * lowBoost);
 
@@ -710,12 +737,11 @@ class PianoTrainerApp {
       oscillators.push(o);
     };
 
-    // Rich harmonic stack for full sound across all registers
-    addOsc('triangle', 1, 0.5);     // fundamental
-    addOsc('sine', 2, 0.3);         // 2nd harmonic
-    addOsc('sine', 3, 0.12);        // 3rd harmonic (warmth)
-    addOsc('sine', 4, 0.06);        // 4th harmonic (brightness)
-    addOsc('sawtooth', 1, 0.15);    // sawtooth for extra body
+    addOsc('triangle', 1, 0.5);
+    addOsc('sine', 2, 0.3);
+    addOsc('sine', 3, 0.12);
+    addOsc('sine', 4, 0.06);
+    addOsc('sawtooth', 1, 0.15);
 
     gain.connect(this.audioCtx.destination);
 
@@ -733,7 +759,38 @@ class PianoTrainerApp {
     this._stopAllActiveOscillators();
   }
 
+  _ensureAudio() {
+    if (!this.audioCtx) {
+      this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume();
+    }
+  }
+
+  async _ensurePianoLoaded() {
+    this._ensureAudio();
+    if (this.pianoPlayer) return;
+    if (this.pianoLoading) return;
+    if (typeof Soundfont === 'undefined') return;
+    this.pianoLoading = true;
+    try {
+      this.pianoPlayer = await Soundfont.instrument(this.audioCtx, 'acoustic_grand_piano', {
+        soundfont: 'MusyngKite',
+        format: 'mp3',
+        gain: 0.6,
+      });
+    } catch (e) {
+      console.warn('Failed to load grand piano soundfont, using fallback:', e);
+      this.pianoPlayer = null;
+    }
+    this.pianoLoading = false;
+  }
+
   _stopAllActiveOscillators() {
+    if (this.pianoPlayer) {
+      this.pianoPlayer.stop();
+    }
     for (const o of this.activeOscillators) {
       try { o.stop(); } catch (e) {}
     }
@@ -786,8 +843,13 @@ class PianoTrainerApp {
   }
 
   _playPreviewNote(noteNum) {
-    if (!this.audioCtx) {
-      this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    this._ensureAudio();
+    if (this.pianoPlayer) {
+      this.pianoPlayer.play(noteNum, this.audioCtx.currentTime, {
+        duration: 1.5,
+        gain: 0.2,
+      });
+      return;
     }
 
     const freq = midiToFrequency(noteNum);
@@ -808,6 +870,9 @@ class PianoTrainerApp {
   }
 
   _stopAllPreviewNotes() {
+    if (this.pianoPlayer) {
+      this.pianoPlayer.stop();
+    }
     for (const [, { osc, gain }] of this.playbackNotes) {
       try {
         gain.gain.cancelScheduledValues(0);
