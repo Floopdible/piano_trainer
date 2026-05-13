@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Screenshots (generated artifacts)
+screenshot/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test MIDI files (optional — uncomment to exclude)
+# testmids/*.mid
+# testmids/*.midi
+
+# VexFlow raw source (bundle is already in js/vexflow/vexflow.bundle.js)
+# Uncomment to reduce repo size; npm install restores them
+# js/vexflow/src/
+# js/vexflow/entry/
+# js/vexflow/tests/

@@ -1,0 +1,21 @@
+{
+  "name": "piano-trainer",
+  "version": "1.0.0",
+  "description": "Mic-based piano practice app with MIDI file support, sheet music rendering, and real-time note detection",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test-parse.js",
+    "screenshot": "node screenshot-sheet.js"
+  },
+  "keywords": [
+    "piano",
+    "midi",
+    "music",
+    "practice",
+    "pitch-detection"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "puppeteer": "^24.43.0"
+  }
+}

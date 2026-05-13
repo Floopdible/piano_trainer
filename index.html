@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Piano Trainer</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Top Bar -->
+    <div class="top-bar">
+      <h1>Piano Trainer</h1>
+      <button class="btn primary" id="btn-load">Load MIDI</button>
+      <input type="file" id="midi-file-input" accept=".mid,.midi">
+      <div class="separator"></div>
+      <button class="btn" id="btn-mic">Mic</button>
+      <button class="btn active" id="btn-sheet">Sheet</button>
+      <button class="btn active" id="btn-sound">Sound</button>
+      <div class="separator"></div>
+      <span class="song-info" id="song-info">No file loaded</span>
+    </div>
+
+    <!-- Controls Row -->
+    <div class="controls-row">
+      <div class="control-group">
+        <label>Mode</label>
+        <select id="mode-select">
+          <option value="watch">Watch</option>
+          <option value="play-along">Play Along</option>
+          <option value="test">Test</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label>Hand</label>
+        <select id="hand-select">
+          <option value="both">Both Hands</option>
+          <option value="right">Right Hand</option>
+          <option value="left">Left Hand</option>
+        </select>
+      </div>
+      <div class="separator"></div>
+      <div class="control-group">
+        <label>Speed</label>
+        <input type="range" id="speed-slider" min="0.25" max="2" step="0.05" value="1">
+        <span id="speed-value" class="speed-label">1.00x</span>
+      </div>
+      <div class="separator"></div>
+      <div class="control-group">
+        <label>Mic Sensitivity</label>
+        <input type="range" id="sensitivity-slider" min="0" max="1" step="0.05" value="0.5">
+      </div>
+      <div class="separator"></div>
+      <div class="progress-container" id="progress-container">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <span class="time-display" id="time-display">0:00 / 0:00</span>
+    </div>
+
+    <!-- Main Area -->
+    <div class="main-area" id="main-area">
+      <!-- Score Overlay -->
+      <div class="score-overlay" id="score-overlay">
+        <div class="score-value" id="score-value">0%</div>
+        <div class="score-details">
+          <span class="correct-count" id="correct-count">0</span> correct
+          <span class="missed-count" id="missed-count">0</span> missed
+          <span class="wrong-count" id="wrong-count">0</span> wrong
+        </div>
+      </div>
+
+      <!-- Waterfall + Piano Canvas -->
+      <div class="canvas-container" id="canvas-container">
+        <canvas id="waterfall-canvas"></canvas>
+      </div>
+
+      <!-- Resizer -->
+      <div class="resizer" id="resizer"></div>
+
+      <!-- Sheet Music Panel -->
+      <div class="sheet-panel visible" id="sheet-panel">
+        <div id="sheet-canvas"></div>
+        <div class="sheet-scroll-hint">Playback auto-pages</div>
+      </div>
+
+      <!-- Welcome Overlay -->
+      <div class="welcome-overlay" id="welcome-overlay">
+        <div class="welcome-content">
+          <h2>Piano Trainer</h2>
+          <p>Load a MIDI file to start practicing piano with real-time mic feedback</p>
+          <div class="welcome-features">
+            <div class="welcome-feature">
+              <h4>Watch Mode</h4>
+              <p>Watch the notes fall and see the sheet music scroll</p>
+            </div>
+            <div class="welcome-feature">
+              <h4>Play Along</h4>
+              <p>Play with the song and get scored on accuracy</p>
+            </div>
+            <div class="welcome-feature">
+              <h4>Hand Practice</h4>
+              <p>Practice left or right hand independently</p>
+            </div>
+            <div class="welcome-feature">
+              <h4>Mic Detection</h4>
+              <p>Detects notes played on your piano via microphone</p>
+            </div>
+          </div>
+          <button class="btn primary" id="btn-load-welcome">Load MIDI File</button>
+          <p style="margin-top:12px;font-size:11px;color:#555">Or drag and drop a .mid file anywhere</p>
+          <p style="margin-top:4px;font-size:11px;color:#555">Keyboard: Space=Play/Pause, M=Mic, S=Sheet, Esc=Stop</p>
+        </div>
+      </div>
+
+      <!-- Results Overlay -->
+      <div class="results-overlay" id="results-overlay">
+        <div class="results-content">
+          <h2>Session Complete</h2>
+          <div class="grade grade-a" id="result-grade">A</div>
+          <div class="results-stats">
+            <div class="result-stat">
+              <div class="value correct-count" id="result-accuracy">0%</div>
+              <div class="label">Accuracy</div>
+            </div>
+            <div class="result-stat">
+              <div class="value correct-count" id="result-correct">0</div>
+              <div class="label">Correct</div>
+            </div>
+            <div class="result-stat">
+              <div class="value missed-count" id="result-missed">0</div>
+              <div class="label">Missed</div>
+            </div>
+          </div>
+          <div class="result-stat" style="margin-bottom:20px">
+            <div class="value wrong-count" id="result-wrong">0</div>
+            <div class="label">Wrong Notes</div>
+          </div>
+          <button class="btn primary" id="btn-retry">Retry</button>
+          <button class="btn" id="btn-close-results">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Transport Controls -->
+    <div class="transport-bar">
+      <button class="transport-btn" id="btn-skip-start" title="Skip to start">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+      </button>
+      <button class="transport-btn" id="btn-skip-back" title="Skip back 5s">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
+      </button>
+      <button class="transport-btn play-btn" id="btn-play-pause" title="Play/Pause">
+        <svg id="icon-play" viewBox="0 0 24 24" width="32" height="32"><path d="M8 5v14l11-7z"/></svg>
+        <svg id="icon-pause" viewBox="0 0 24 24" width="32" height="32" style="display:none"><path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z"/></svg>
+      </button>
+      <button class="transport-btn" id="btn-skip-forward" title="Skip forward 5s">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 18l8.5-6L4 6v12zm9-12v12h2V6h-2z"/></svg>
+      </button>
+      <button class="transport-btn" id="btn-skip-end" title="Skip to end">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+      </button>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="mic-indicator">
+          <div class="mic-dot" id="mic-dot"></div>
+          <span>Mic</span>
+        </div>
+        <div class="volume-meter">
+          <div class="volume-bar"></div>
+          <div class="volume-bar"></div>
+          <div class="volume-bar"></div>
+          <div class="volume-bar"></div>
+          <div class="volume-bar"></div>
+          <div class="volume-bar"></div>
+          <div class="volume-bar"></div>
+          <div class="volume-bar"></div>
+        </div>
+        <span id="detected-notes"></span>
+      </div>
+      <span id="status-text">Ready - Load a MIDI file to begin</span>
+    </div>
+  </div>
+
+  <script src="js/vexflow/vexflow.bundle.js"></script>
+  <script src="js/midi-parser.js"></script>
+  <script src="js/pitch-detector.js"></script>
+  <script src="js/piano-renderer.js"></script>
+  <script src="js/sheet-renderer.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
