@@ -74,7 +74,11 @@ class PianoTrainerApp {
     this.handSelect = document.getElementById('hand-select');
     this.speedSlider = document.getElementById('speed-slider');
     this.speedValue = document.getElementById('speed-value');
-    this.sensitivitySlider = document.getElementById('sensitivity-slider');
+    this.detectionMode = document.getElementById('detection-mode');
+    this.micSensSlider = document.getElementById('mic-sens-slider');
+    this.claritySlider = document.getElementById('clarity-slider');
+    this.speedSliderDetect = document.getElementById('speed-slider-detect');
+    this.releaseSlider = document.getElementById('release-slider');
 
     this.songInfoEl = document.getElementById('song-info');
     this.timeDisplay = document.getElementById('time-display');
@@ -156,9 +160,37 @@ class PianoTrainerApp {
       this.speedValue.textContent = this.playbackSpeed.toFixed(2) + 'x';
     });
 
-    // Sensitivity
-    this.sensitivitySlider.addEventListener('input', (e) => {
-      this.pitchDetector.setSensitivity(parseFloat(e.target.value));
+    // Detection mode
+    this.detectionMode.addEventListener('change', (e) => {
+      this.pitchDetector.setMode(e.target.value);
+      const isStd = e.target.value === 'standard';
+      document.getElementById('detect-controls').style.display = isStd ? '' : 'none';
+    });
+
+    // Global sensitivity (works across both modes)
+    this.micSensSlider.addEventListener('input', (e) => {
+      const v = parseFloat(e.target.value);
+      this.pitchDetector.setSensitivity(v);
+      document.getElementById('mic-sens-val').textContent = v.toFixed(2);
+      // Sync advanced sliders
+      this.claritySlider.value = v;
+      this.speedSliderDetect.value = v;
+      this.releaseSlider.value = v;
+      this._updateSliderValues();
+    });
+
+    // Standard detection sliders
+    this.claritySlider.addEventListener('input', (e) => {
+      this.pitchDetector.setClarity(parseFloat(e.target.value));
+      this._updateSliderValues();
+    });
+    this.speedSliderDetect.addEventListener('input', (e) => {
+      this.pitchDetector.setSpeed(parseFloat(e.target.value));
+      this._updateSliderValues();
+    });
+    this.releaseSlider.addEventListener('input', (e) => {
+      this.pitchDetector.setRelease(parseFloat(e.target.value));
+      this._updateSliderValues();
     });
 
     // Progress bar click and smooth drag
@@ -356,6 +388,15 @@ class PianoTrainerApp {
     this._ensurePianoLoaded();
   }
 
+  _updateSliderValues() {
+    const c = parseFloat(this.claritySlider.value);
+    const s = parseFloat(this.speedSliderDetect.value);
+    const r = parseFloat(this.releaseSlider.value);
+    document.getElementById('clarity-val').textContent = (0.85 - c * 0.45).toFixed(2);
+    document.getElementById('speed-val').textContent = Math.round(5 - s * 3) + 'fr';
+    document.getElementById('release-val').textContent = Math.round(14 - r * 11) + 'fr';
+  }
+
   async _loadFile(file) {
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -470,7 +511,7 @@ class PianoTrainerApp {
         this.micDot.classList.add('active');
       } else {
         this.micDot.classList.add('error');
-        this.statusText.textContent = 'Microphone access denied';
+        this.statusText.textContent = 'Mic failed — check console for details';
       }
     }
   }
@@ -516,7 +557,7 @@ class PianoTrainerApp {
       if (target.noteNumber === noteNum && !this.matchedNotes.has(noteKey)) {
         this.matchedNotes.add(noteKey);
         this.score.correct++;
-        this.pianoRenderer.setHighlight(noteNum, '#4CAF50');
+        this.pianoRenderer.setHighlight(noteNum, '#00E5FF');
         this.pianoRenderer.setNoteResult(target, 'correct');
         this.sheetRenderer.setNoteResult(target, 'correct');
         matched = true;
@@ -527,7 +568,7 @@ class PianoTrainerApp {
 
     if (!matched && this.activeTargets.size > 0) {
       this.score.wrong++;
-      this.pianoRenderer.setHighlight(noteNum, '#f44336');
+      this.pianoRenderer.setHighlight(noteNum, '#FF1744');
       setTimeout(() => this.pianoRenderer.setHighlight(noteNum, null), 300);
     }
 
@@ -628,6 +669,8 @@ class PianoTrainerApp {
         }
       }
       for (const noteNum of activeNoteNumbers) {
+        // Don't overwrite mic detection highlights
+        if (this.pitchDetector.activeNotes.has(noteNum)) continue;
         const rep = this.midiData.notes.find(n =>
           n.noteNumber === noteNum &&
           n.startTime <= this.currentTime &&

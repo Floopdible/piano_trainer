@@ -135,6 +135,28 @@ select:focus {
   letter-spacing: 0.3px;
 }
 
+.detect-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detect-controls .control-group {
+  gap: 3px;
+}
+
+.detect-controls input[type="range"] {
+  width: 52px;
+}
+
+.slider-val {
+  font-size: 10px;
+  color: #999;
+  min-width: 28px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .separator {
   width: 1px;
   height: 22px;
