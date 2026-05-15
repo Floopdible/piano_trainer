@@ -1,0 +1,7 @@
+{
+  "sample_rate": 16000,
+  "frames_per_second": 100,
+  "classes_num": 88,
+  "segment_duration": 10,
+  "frame_threshold": 0.3
+}

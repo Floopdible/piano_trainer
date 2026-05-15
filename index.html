@@ -7,16 +7,12 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <div id="app">
+   <div id="app">
     <!-- Top Bar -->
     <div class="top-bar">
       <h1>Piano Trainer</h1>
       <button class="btn primary" id="btn-load">Load MIDI</button>
       <input type="file" id="midi-file-input" accept=".mid,.midi">
-      <div class="separator"></div>
-      <button class="btn" id="btn-mic">Mic</button>
-      <button class="btn active" id="btn-sheet">Sheet</button>
-      <button class="btn active" id="btn-sound">Sound</button>
       <div class="separator"></div>
       <span class="song-info" id="song-info">No file loaded</span>
     </div>
@@ -47,20 +43,27 @@
       </div>
       <div class="separator"></div>
       <div class="control-group">
-        <label>Detection</label>
-        <select id="detection-mode">
-          <option value="standard">Standard</option>
-          <option value="ml">ML (CREPE)</option>
+        <label>Noise Cancel</label>
+        <select id="noise-cancel">
+          <option value="none">None</option>
+          <option value="spectral" selected>Spectral</option>
+          <option value="deepfilternet3">DeepFilterNet3</option>
         </select>
       </div>
       <div class="separator"></div>
       <div class="control-group">
-        <label>Sensitivity</label>
-        <input type="range" id="mic-sens-slider" min="0" max="1" step="0.05" value="0.5">
-        <span class="slider-val" id="mic-sens-val">0.50</span>
+        <label>Detection</label>
+        <select id="detection-mode">
+          <option value="standard">Standard (instant)</option>
+          <option value="basic-pitch">Basic Pitch (~80% F1)</option>
+          <option value="transkun">Transkun (~94% F1) ⚡</option>
+          <option value="kong">Kong/Bytedance (~90% F1)</option>
+        </select>
       </div>
       <div class="separator"></div>
-      <div class="detect-controls" id="detect-controls">
+      <button class="btn" id="btn-calibrate" title="Calibrate tuning">Tune</button>
+      <div class="separator"></div>
+      <div class="detect-controls" id="detect-controls" style="display:none">
         <div class="control-group">
           <label>Clarity</label>
           <input type="range" id="clarity-slider" min="0" max="1" step="0.05" value="0.5">
@@ -76,6 +79,12 @@
           <input type="range" id="release-slider" min="0" max="1" step="0.05" value="0.5">
           <span class="slider-val" id="release-val">8fr</span>
         </div>
+      </div>
+      <div class="separator"></div>
+      <div class="control-group">
+        <label>Volume</label>
+        <input type="range" id="volume-slider" min="0" max="1000" step="1" value="80" style="width:60px">
+        <span id="volume-val" class="speed-label">80%</span>
       </div>
       <div class="separator"></div>
       <div class="progress-container" id="progress-container">
@@ -139,6 +148,20 @@
         </div>
       </div>
 
+      <!-- Calibration Overlay -->
+      <div class="cal-overlay" id="cal-overlay">
+        <div class="cal-panel">
+          <h3>Calibrate Tuning</h3>
+          <p class="cal-desc">Play A4 on your piano (hold for 1 second)</p>
+          <div class="cal-note-display" id="cal-note-display">A4</div>
+          <div class="cal-progress-track">
+            <div class="cal-progress-fill" id="cal-progress-fill"></div>
+          </div>
+          <div class="cal-status-msg" id="cal-status-msg">Waiting...</div>
+          <button class="btn" id="btn-cal-cancel">Cancel</button>
+        </div>
+      </div>
+
       <!-- Results Overlay -->
       <div class="results-overlay" id="results-overlay">
         <div class="results-content">
@@ -168,52 +191,69 @@
       </div>
     </div>
 
-    <!-- Bottom Transport Controls -->
-    <div class="transport-bar">
-      <button class="transport-btn" id="btn-skip-start" title="Skip to start">
-        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
-      </button>
-      <button class="transport-btn" id="btn-skip-back" title="Skip back 5s">
-        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
-      </button>
-      <button class="transport-btn play-btn" id="btn-play-pause" title="Play/Pause">
-        <svg id="icon-play" viewBox="0 0 24 24" width="32" height="32"><path d="M8 5v14l11-7z"/></svg>
-        <svg id="icon-pause" viewBox="0 0 24 24" width="32" height="32" style="display:none"><path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z"/></svg>
-      </button>
-      <button class="transport-btn" id="btn-skip-forward" title="Skip forward 5s">
-        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 18l8.5-6L4 6v12zm9-12v12h2V6h-2z"/></svg>
-      </button>
-      <button class="transport-btn" id="btn-skip-end" title="Skip to end">
-        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
-      </button>
-    </div>
-
-    <!-- Status Bar -->
-    <div class="status-bar">
-      <div style="display:flex;align-items:center;gap:10px">
-        <div class="mic-indicator">
-          <div class="mic-dot" id="mic-dot"></div>
-          <span>Mic</span>
-        </div>
-        <div class="volume-meter">
-          <div class="volume-bar"></div>
-          <div class="volume-bar"></div>
-          <div class="volume-bar"></div>
-          <div class="volume-bar"></div>
-          <div class="volume-bar"></div>
-          <div class="volume-bar"></div>
-          <div class="volume-bar"></div>
-          <div class="volume-bar"></div>
-        </div>
-        <span id="detected-notes"></span>
+    <!-- Bottom Bar -->
+    <div class="bottom-bar">
+      <div class="bottom-left">
+        <span class="bar-label">Sens</span>
+        <input type="range" id="sensitivity-slider" min="0" max="1" step="0.05" value="0.5">
+        <span class="bar-val" id="sens-val">0.50</span>
       </div>
-      <span id="status-text">Ready - Load a MIDI file to begin</span>
+
+      <div class="transport-bar">
+        <button class="transport-btn" id="btn-skip-start" title="Skip to start">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+        </button>
+        <button class="transport-btn" id="btn-skip-back" title="Skip back 5s">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
+        </button>
+        <button class="transport-btn play-btn" id="btn-play-pause" title="Play/Pause">
+          <svg id="icon-play" viewBox="0 0 24 24" width="26" height="26"><path d="M8 5v14l11-7z"/></svg>
+          <svg id="icon-pause" viewBox="0 0 24 24" width="26" height="26" style="display:none"><path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z"/></svg>
+        </button>
+        <button class="transport-btn" id="btn-skip-forward" title="Skip forward 5s">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 18l8.5-6L4 6v12zm9-12v12h2V6h-2z"/></svg>
+        </button>
+        <button class="transport-btn" id="btn-skip-end" title="Skip to end">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+        </button>
+      </div>
+
+      <div class="bottom-right">
+        <button class="icon-btn" id="btn-mic" title="Toggle microphone">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+        </button>
+        <button class="icon-btn active" id="btn-sheet" title="Toggle sheet music">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+        </button>
+        <button class="icon-btn active" id="btn-sound" title="Toggle sound">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v5a4.47 4.47 0 0 0 2.5-1.5zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-record" title="Record 10s noise cancellation demo">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+        </button>
+        <div class="mic-dot" id="mic-dot"></div>
+        <div class="volume-meter">
+          <div class="volume-bar"></div><div class="volume-bar"></div><div class="volume-bar"></div><div class="volume-bar"></div>
+          <div class="volume-bar"></div><div class="volume-bar"></div><div class="volume-bar"></div><div class="volume-bar"></div>
+        </div>
+        <div class="status-group">
+          <span id="detected-notes"></span>
+          <span id="status-text">Ready</span>
+          <span id="rec-status" class="rec-status"></span>
+        </div>
+      </div>
+    </div>
+    <div id="rec-playback" class="rec-playback" style="display:none">
+      <div class="rec-compare" id="rec-compare"></div>
+      <button class="btn" id="btn-rec-close">Close</button>
     </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/soundfont-player@0.12.0/dist/soundfont-player.min.js"></script>
   <script src="js/vexflow/vexflow.bundle.js"></script>
   <script src="js/midi-parser.js"></script>
+  <script src="js/spectral-subtractor.js"></script>
+  <script src="js/transkun-decoder.js"></script>
   <script src="js/pitch-detector.js"></script>
   <script src="js/piano-renderer.js"></script>
   <script src="js/sheet-renderer.js"></script>

@@ -18,6 +18,10 @@ Thumbs.db
 *.swp
 *.swo
 
+# Model conversion artifacts (too large for git, served from CDN or downloaded at build)
+models/kong_traced.pt
+models/transkun_traced.pt
+
 # Test MIDI files (optional — uncomment to exclude)
 # testmids/*.mid
 # testmids/*.midi

@@ -40,6 +40,7 @@ class PianoRenderer {
     // State
     this.pressedKeys = new Set();
     this.highlightedKeys = new Map(); // noteNum -> color
+    this.detectionHighlights = new Map(); // noteNum -> color (gold outline)
     this.noteResults = new Map(); // note id -> 'correct' | 'wrong' | 'missed'
 
     this._buildKeyMap();
@@ -330,6 +331,41 @@ class PianoRenderer {
       ctx.fillStyle = grad;
       ctx.fillRect(x, y, this.blackKeyWidth, this.blackKeyHeight);
     }
+
+    // Detection gold outline overlay (drawn on top of ALL key rendering)
+    ctx.save();
+    for (let n = this.firstNote; n <= this.lastNote; n++) {
+      const color = this.detectionHighlights.get(n);
+      if (!color) continue;
+      const key = this.keyMap[n];
+      const x = key.isBlack ? this.getKeyX(n) : key.whiteIndex * this.whiteKeyWidth;
+      const w = key.isBlack ? this.blackKeyWidth : this.whiteKeyWidth - 1;
+      const h = key.isBlack ? this.blackKeyHeight : this.pianoHeight;
+      // Bright fill
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 14;
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = color;
+      ctx.fillRect(x, this.pianoY, w, h);
+      ctx.globalAlpha = 1;
+      // Thick stroke
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = color;
+      ctx.shadowBlur = 18;
+      ctx.strokeRect(x + 1, this.pianoY + 1, w - 2, h - 2);
+    }
+    ctx.restore();
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+  }
+
+  setDetectionHighlight(noteNumber, color) {
+    if (color) this.detectionHighlights.set(noteNumber, color);
+    else this.detectionHighlights.delete(noteNumber);
+  }
+
+  clearDetectionHighlights() {
+    this.detectionHighlights.clear();
   }
 
   setPressed(noteNumber, pressed) {

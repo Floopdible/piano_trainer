@@ -17,5 +17,14 @@
   "license": "MIT",
   "devDependencies": {
     "puppeteer": "^24.43.0"
+  },
+  "dependencies": {
+    "@markusstrasser/pitchplease": "^2.0.0",
+    "@tensorflow/tfjs": "^4.21.0",
+    "fft.js": "^4.0.4",
+    "midi-file": "^1.2.4",
+    "onnxruntime-web": "^1.26.0",
+    "pitchy": "^4.1.0",
+    "puppeteer-core": "^24.43.1"
   }
 }

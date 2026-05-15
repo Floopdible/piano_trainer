@@ -31,10 +31,12 @@ class PianoTrainerApp {
     this.wrongNotes = [];
     this.toleranceMs = 300;
     this.waitingForNotes = false;
+    this._detectionTimeouts = new Map();
 
     this.audioCtx = null;
     this.pianoPlayer = null;
     this.pianoLoading = false;
+    this.masterVolume = 80;
     this.playbackNotes = new Map();
     this.soundEnabled = true;
     this.soundedNotes = new Map();
@@ -74,11 +76,23 @@ class PianoTrainerApp {
     this.handSelect = document.getElementById('hand-select');
     this.speedSlider = document.getElementById('speed-slider');
     this.speedValue = document.getElementById('speed-value');
+    this.sensitivitySlider = document.getElementById('sensitivity-slider');
     this.detectionMode = document.getElementById('detection-mode');
-    this.micSensSlider = document.getElementById('mic-sens-slider');
-    this.claritySlider = document.getElementById('clarity-slider');
-    this.speedSliderDetect = document.getElementById('speed-slider-detect');
-    this.releaseSlider = document.getElementById('release-slider');
+    this.noiseCancel = document.getElementById('noise-cancel');
+    this.recordBtn = document.getElementById('btn-record');
+    this.recStatus = document.getElementById('rec-status');
+    this.recPlayback = document.getElementById('rec-playback');
+    this.recCompare = document.getElementById('rec-compare');
+    this.recClose = document.getElementById('btn-rec-close');
+    this.volumeSlider = document.getElementById('volume-slider');
+    this.volumeVal = document.getElementById('volume-val');
+    this.sensVal = document.getElementById('sens-val');
+    this.calibrateBtn = document.getElementById('btn-calibrate');
+    this.calOverlay = document.getElementById('cal-overlay');
+    this.calNoteDisplay = document.getElementById('cal-note-display');
+    this.calProgressFill = document.getElementById('cal-progress-fill');
+    this.calStatusMsg = document.getElementById('cal-status-msg');
+    this.calCancelBtn = document.getElementById('btn-cal-cancel');
 
     this.songInfoEl = document.getElementById('song-info');
     this.timeDisplay = document.getElementById('time-display');
@@ -160,38 +174,63 @@ class PianoTrainerApp {
       this.speedValue.textContent = this.playbackSpeed.toFixed(2) + 'x';
     });
 
+    // Sensitivity
+    this.sensitivitySlider.addEventListener('input', (e) => {
+      this.pitchDetector.setSensitivity(parseFloat(e.target.value));
+      if (this.sensVal) this.sensVal.textContent = parseFloat(e.target.value).toFixed(2);
+    });
+
     // Detection mode
     this.detectionMode.addEventListener('change', (e) => {
       this.pitchDetector.setMode(e.target.value);
-      const isStd = e.target.value === 'standard';
-      document.getElementById('detect-controls').style.display = isStd ? '' : 'none';
     });
 
-    // Global sensitivity (works across both modes)
-    this.micSensSlider.addEventListener('input', (e) => {
-      const v = parseFloat(e.target.value);
-      this.pitchDetector.setSensitivity(v);
-      document.getElementById('mic-sens-val').textContent = v.toFixed(2);
-      // Sync advanced sliders
-      this.claritySlider.value = v;
-      this.speedSliderDetect.value = v;
-      this.releaseSlider.value = v;
-      this._updateSliderValues();
+    // Noise cancellation mode
+    this.noiseCancel.addEventListener('change', (e) => {
+      this.pitchDetector.setNoiseCancel(e.target.value);
     });
 
-    // Standard detection sliders
-    this.claritySlider.addEventListener('input', (e) => {
-      this.pitchDetector.setClarity(parseFloat(e.target.value));
-      this._updateSliderValues();
+    // Record 10s noise cancellation demo
+    this.recordBtn.addEventListener('click', () => this._startRecording());
+    this.recClose.addEventListener('click', () => {
+      this.recPlayback.style.display = 'none';
+      this.recCompare.querySelectorAll('audio').forEach(a => { a.pause(); a.src = ''; });
+      this.recCompare.innerHTML = '';
     });
-    this.speedSliderDetect.addEventListener('input', (e) => {
-      this.pitchDetector.setSpeed(parseFloat(e.target.value));
-      this._updateSliderValues();
+
+    // Volume slider (0-400%)
+    const updateVolume = (val) => {
+      this.masterVolume = parseInt(val);
+      const pct = val + '%';
+      this.volumeVal.textContent = pct;
+      if (this.volumeSlider) this.volumeSlider.value = val;
+    };
+    this.volumeSlider.addEventListener('input', (e) => updateVolume(e.target.value));
+
+    // Calibration
+    this.calibrateBtn.addEventListener('click', async () => {
+      if (!this.micEnabled) {
+        const ok = await this.pitchDetector.start();
+        if (!ok) return;
+        this.micEnabled = true;
+        this.micBtn.classList.add('active');
+        this.micDot.classList.add('active');
+      }
+      this._startCalibration();
     });
-    this.releaseSlider.addEventListener('input', (e) => {
-      this.pitchDetector.setRelease(parseFloat(e.target.value));
-      this._updateSliderValues();
-    });
+    this.calCancelBtn.addEventListener('click', () => this._cancelCalibration());
+
+    // Pitch detector calibration hook
+    this.pitchDetector.onNotesDetected = (notes) => {
+      if (this._calibrating && notes.length > 0) {
+        if (this._calWaitingForA4 && notes[0].noteNumber === 69) {
+          this._calStableFrames++;
+          if (this._calStableFrames >= 6) this._recordCalibration(notes[0].frequency);
+        } else if (this._calWaitingForA4) {
+          this._calStableFrames = 0;
+        }
+      }
+    };
 
     // Progress bar click and smooth drag
     this.progressContainer.addEventListener('click', (e) => {
@@ -297,6 +336,7 @@ class PianoTrainerApp {
     // Pitch detector callbacks
     this.pitchDetector.onNoteOn = (noteNum, confidence) => {
       this.pianoRenderer.setPressed(noteNum, true);
+      this.pianoRenderer.setDetectionHighlight(noteNum, '#FFD700');
       if (this.mode !== 'watch' && this.isPlaying) {
         this._handleDetectedNote(noteNum, confidence);
       }
@@ -304,7 +344,14 @@ class PianoTrainerApp {
 
     this.pitchDetector.onNoteOff = (noteNum) => {
       this.pianoRenderer.setPressed(noteNum, false);
-      this.pianoRenderer.setHighlight(noteNum, null);
+      // Keep detection gold outline visible briefly so user can see it
+      if (this.pianoRenderer.detectionHighlights.has(noteNum)) {
+        if (this._detectionTimeouts.has(noteNum)) clearTimeout(this._detectionTimeouts.get(noteNum));
+        this._detectionTimeouts.set(noteNum, setTimeout(() => {
+          this.pianoRenderer.setDetectionHighlight(noteNum, null);
+          this._detectionTimeouts.delete(noteNum);
+        }, 400));
+      }
     };
 
     // Drag and drop
@@ -386,15 +433,6 @@ class PianoTrainerApp {
   _onUserGesture() {
     this._ensureAudio();
     this._ensurePianoLoaded();
-  }
-
-  _updateSliderValues() {
-    const c = parseFloat(this.claritySlider.value);
-    const s = parseFloat(this.speedSliderDetect.value);
-    const r = parseFloat(this.releaseSlider.value);
-    document.getElementById('clarity-val').textContent = (0.85 - c * 0.45).toFixed(2);
-    document.getElementById('speed-val').textContent = Math.round(5 - s * 3) + 'fr';
-    document.getElementById('release-val').textContent = Math.round(14 - r * 11) + 'fr';
   }
 
   async _loadFile(file) {
@@ -487,6 +525,7 @@ class PianoTrainerApp {
     this.waitingForNotes = false;
     this._updatePlayButton();
     this.pianoRenderer.clearHighlights();
+    this.pianoRenderer.clearDetectionHighlights();
     this.pianoRenderer.pressedKeys.clear();
     this.activeTargets.clear();
     this.processedNoteKeys.clear();
@@ -511,8 +550,211 @@ class PianoTrainerApp {
         this.micDot.classList.add('active');
       } else {
         this.micDot.classList.add('error');
-        this.statusText.textContent = 'Mic failed — check console for details';
+        this.statusText.textContent = 'Microphone access denied';
       }
+    }
+  }
+
+  _startCalibration() {
+    this._calibrating = true;
+    this._calWaitingForA4 = true;
+    this._calStableFrames = 0;
+    // Save and switch to Standard mode for raw frequency detection
+    this._savedDetectionMode = this.detectionMode.value;
+    if (this._savedDetectionMode !== 'standard') {
+      this.detectionMode.value = 'standard';
+      this.pitchDetector.setMode('standard');
+    }
+    this.calibrateBtn.textContent = 'Tuning';
+    this.calibrateBtn.disabled = true;
+    this.calNoteDisplay.textContent = 'A4';
+    this.calProgressFill.style.width = '0%';
+    this.calStatusMsg.textContent = 'Play A4 on your piano';
+    this.calStatusMsg.className = 'cal-status-msg';
+    this.calOverlay.classList.add('visible');
+  }
+
+  _cancelCalibration() {
+    this._calibrating = false;
+    this._calWaitingForA4 = false;
+    this._calStableFrames = 0;
+    this.calOverlay.classList.remove('visible');
+    this.calibrateBtn.textContent = 'Tune';
+    this.calibrateBtn.disabled = false;
+    // Restore detection mode
+    if (this._savedDetectionMode && this._savedDetectionMode !== this.detectionMode.value) {
+      this.detectionMode.value = this._savedDetectionMode;
+      this.pitchDetector.setMode(this._savedDetectionMode);
+    }
+    this._savedDetectionMode = null;
+  }
+
+  _recordCalibration(freq) {
+    if (!this._calibrating || !this._calWaitingForA4) return;
+    this._calWaitingForA4 = false;
+    this.pitchDetector.calibrate(freq);
+    this.calStatusMsg.textContent = 'Calibrated! ✓';
+    this.calStatusMsg.className = 'cal-status-msg done';
+    this.calProgressFill.style.width = '100%';
+    setTimeout(() => {
+      this.calOverlay.classList.remove('visible');
+      this.calibrateBtn.textContent = 'Tuned';
+      this.calibrateBtn.disabled = false;
+      // Restore detection mode
+      if (this._savedDetectionMode && this._savedDetectionMode !== this.detectionMode.value) {
+        this.detectionMode.value = this._savedDetectionMode;
+        this.pitchDetector.setMode(this._savedDetectionMode);
+      }
+      this._savedDetectionMode = null;
+      setTimeout(() => { this.calibrateBtn.textContent = 'Tune'; }, 3000);
+    }, 1200);
+    this._calibrating = false;
+  }
+
+  _startRecording() {
+    if (!this.micEnabled) { this.statusText.textContent = 'Enable mic first'; return; }
+    if (this._recording) return;
+    this._recording = true;
+    this.recordBtn.classList.add('active');
+    this.recordBtn.style.color = '#FF1744';
+    this.recStatus.textContent = 'REC 0s';
+
+    const stream = this.pitchDetector._stream;
+    if (!stream) { this._recording = false; return; }
+
+    // Capture raw PCM via ScriptProcessorNode — no Opus compression, no browser processing
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const rawCtx = new AC();
+    const src = rawCtx.createMediaStreamSource(stream);
+    const scNode = rawCtx.createScriptProcessor(4096, 1, 1);
+    const silent = rawCtx.createGain();
+    silent.gain.value = 0;
+
+    const pcmChunks = [];
+    scNode.onaudioprocess = (e) => {
+      pcmChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    };
+
+    src.connect(scNode);
+    scNode.connect(silent);
+    silent.connect(rawCtx.destination);
+
+    let sec = 0;
+    const timer = setInterval(async () => {
+      sec++;
+      this.recStatus.textContent = 'REC ' + sec + 's';
+      if (sec >= 10) {
+        clearInterval(timer);
+        scNode.disconnect();
+        silent.disconnect();
+
+        this._recording = false;
+        this.recordBtn.classList.remove('active');
+        this.recordBtn.style.color = '';
+        this.recStatus.textContent = 'Processing...';
+        this.recCompare.innerHTML = '';
+        this.recPlayback.style.display = 'block';
+
+        // Concatenate all PCM chunks
+        let totalLen = 0;
+        for (const c of pcmChunks) totalLen += c.length;
+        const ch = new Float32Array(totalLen);
+        let off = 0;
+        for (const c of pcmChunks) { ch.set(c, off); off += c.length; }
+        const sr = rawCtx.sampleRate;
+
+        // Raw WAV — truly raw PCM, no codec artifacts
+        const rawRow = document.createElement('div');
+        rawRow.className = 'rec-compare-row';
+        rawRow.innerHTML = '<label>Raw</label><audio controls src="' + URL.createObjectURL(new Blob([this._encodeWAV(sr, ch)], { type: 'audio/wav' })) + '"></audio>';
+        this.recCompare.appendChild(rawRow);
+
+        // Placeholder rows for Spectral and DF3
+        const spRow = document.createElement('div');
+        spRow.className = 'rec-compare-row';
+        spRow.innerHTML = '<label style="color:#7c9cff">Spectral</label><span style="color:#888;font-size:12px">Processing…</span>';
+        this.recCompare.appendChild(spRow);
+
+        const dfRow = document.createElement('div');
+        dfRow.className = 'rec-compare-row';
+        dfRow.innerHTML = '<label style="color:#4CAF50">DF3</label><span style="color:#888;font-size:12px">Processing…</span>';
+        this.recCompare.appendChild(dfRow);
+
+        this.recStatus.textContent = '';
+
+        // Process spectral + DF3 using the same raw PCM
+        this._processDecodedAudio(sr, ch, spRow, dfRow, rawCtx);
+      }
+    }, 1000);
+  }
+
+  _encodeWAV(sampleRate, samples) {
+    const buf = new ArrayBuffer(44 + samples.length * 2);
+    const v = new DataView(buf);
+    const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+    writeStr(0, 'RIFF');
+    v.setUint32(4, 36 + samples.length * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true);
+    v.setUint32(24, sampleRate, true);
+    v.setUint32(28, sampleRate * 2, true);
+    v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true);
+    writeStr(36, 'data');
+    v.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    return buf;
+  }
+
+  async _processDecodedAudio(sr, ch, spRow, dfRow, audioCtx) {
+    try {
+      // Spectral (sync — fast, <100ms for 10s recording)
+      try {
+        const denoiser = new SpectralSubtractor({ sampleRate: sr, fftSize: 2048, noiseProfileFrames: 5 });
+        const cleaned = new Float32Array(ch.length);
+        for (let i = 0; i < ch.length; i += 2048) {
+          const end = Math.min(i + 2048, ch.length);
+          const frame = ch.subarray(i, end);
+          try {
+            const result = denoiser.processFrame(frame);
+            if (result && result.audio) cleaned.set(result.audio.subarray(0, end - i), i);
+            else cleaned.set(frame, i);
+          } catch (e) { cleaned.set(frame, i); }
+        }
+        spRow.innerHTML = '<label style="color:#7c9cff">Spectral</label><audio controls src="' + URL.createObjectURL(new Blob([this._encodeWAV(sr, cleaned)], { type: 'audio/wav' })) + '"></audio>';
+      } catch (e) { spRow.innerHTML = '<label style="color:#7c9cff">Spectral</label><span style="color:#f44;font-size:12px">Failed</span>'; }
+
+      // DeepFilterNet3 — offline via OfflineAudioContext
+      try {
+        const df3 = this.pitchDetector._df;
+        if (!df3 || !df3.isInitialized) throw new Error('DF3 not loaded');
+        const offCtx = new OfflineAudioContext(1, ch.length, sr);
+        const dfNode = await df3.createAudioWorkletNode(offCtx);
+        const src = offCtx.createBufferSource();
+        const buf = offCtx.createBuffer(1, ch.length, sr);
+        buf.getChannelData(0).set(ch);
+        src.buffer = buf;
+        src.connect(dfNode);
+        dfNode.connect(offCtx.destination);
+        src.start();
+        const rendered = await offCtx.startRendering();
+        const out = rendered.getChannelData(0);
+        dfRow.innerHTML = '<label style="color:#4CAF50">DF3</label><audio controls src="' + URL.createObjectURL(new Blob([this._encodeWAV(sr, out)], { type: 'audio/wav' })) + '"></audio>';
+      } catch (e) {
+        console.warn('DF3 offline failed:', e.message);
+        dfRow.innerHTML = '<label style="color:#4CAF50">DF3</label><span style="color:#f44;font-size:12px">Failed</span>';
+      }
+
+      audioCtx.close();
+    } catch (e) {
+      spRow.innerHTML = '<label style="color:#7c9cff">Spectral</label><span style="color:#f44;font-size:12px">Failed</span>';
+      dfRow.innerHTML = '<label style="color:#4CAF50">DF3</label><span style="color:#f44;font-size:12px">Failed</span>';
     }
   }
 
@@ -557,7 +799,7 @@ class PianoTrainerApp {
       if (target.noteNumber === noteNum && !this.matchedNotes.has(noteKey)) {
         this.matchedNotes.add(noteKey);
         this.score.correct++;
-        this.pianoRenderer.setHighlight(noteNum, '#00E5FF');
+        this.pianoRenderer.setDetectionHighlight(noteNum, '#FFD700');
         this.pianoRenderer.setNoteResult(target, 'correct');
         this.sheetRenderer.setNoteResult(target, 'correct');
         matched = true;
@@ -568,12 +810,15 @@ class PianoTrainerApp {
 
     if (!matched && this.activeTargets.size > 0) {
       this.score.wrong++;
-      this.pianoRenderer.setHighlight(noteNum, '#FF1744');
-      setTimeout(() => this.pianoRenderer.setHighlight(noteNum, null), 300);
+      this.pianoRenderer.setDetectionHighlight(noteNum, '#FF1744');
+      setTimeout(() => this.pianoRenderer.setDetectionHighlight(noteNum, null), 400);
     }
 
     if (this.waitingForNotes && this.activeTargets.size === 0) {
-      this.waitingForNotes = false;
+    this.waitingForNotes = false;
+    this._calibrating = false;
+    this._calStableFrames = 0;
+    this._recording = false;
       this.startTimestamp = performance.now() - (this.currentTime * 1000 / this.playbackSpeed);
     }
 
@@ -669,8 +914,6 @@ class PianoTrainerApp {
         }
       }
       for (const noteNum of activeNoteNumbers) {
-        // Don't overwrite mic detection highlights
-        if (this.pitchDetector.activeNotes.has(noteNum)) continue;
         const rep = this.midiData.notes.find(n =>
           n.noteNumber === noteNum &&
           n.startTime <= this.currentTime &&
@@ -709,6 +952,18 @@ class PianoTrainerApp {
       this.detectedNotesEl.textContent = detected.length > 0
         ? 'Detected: ' + detected.map(n => n.noteName).join(', ')
         : '';
+
+      // DEBUG layout shift (enable: _debugLayout = true in console)
+      if (window._debugLayout) {
+        const br = this.detectedNotesEl.closest('.bottom-right');
+        const tb = document.querySelector('.transport-bar');
+        if (br && tb) {
+          if (!this._lastLayoutLog || performance.now() - this._lastLayoutLog > 500) {
+            this._lastLayoutLog = performance.now();
+            console.log('br.w=', br.offsetWidth, 'tb.w=', tb.offsetWidth, 'sg.w=', br.querySelector('.status-group')?.offsetWidth, 'txt=', JSON.stringify(this.detectedNotesEl.textContent));
+          }
+        }
+      }
     }
 
     this.animFrame = requestAnimationFrame(() => this._renderLoop());
@@ -747,7 +1002,7 @@ class PianoTrainerApp {
     if (this.pianoPlayer) {
       this.pianoPlayer.play(noteNum, this.audioCtx.currentTime, {
         duration: Math.min(duration, 4),
-        gain: Math.max(0.05, velocity * 0.3),
+        gain: Math.max(0.05, velocity * 0.3) * (this.masterVolume / 50),
       });
       return;
     }
@@ -890,7 +1145,7 @@ class PianoTrainerApp {
     if (this.pianoPlayer) {
       this.pianoPlayer.play(noteNum, this.audioCtx.currentTime, {
         duration: 1.5,
-        gain: 0.2,
+        gain: 0.2 * (this.masterVolume / 50),
       });
       return;
     }
