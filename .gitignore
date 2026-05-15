@@ -18,16 +18,29 @@ Thumbs.db
 *.swp
 *.swo
 
-# Model conversion artifacts (too large for git, served from CDN or downloaded at build)
+# Model conversion artifacts (too large for git)
 models/kong_traced.pt
 models/transkun_traced.pt
 
-# Test MIDI files (optional — uncomment to exclude)
+# Test files (not needed for deployment)
+clef-test.js
+screenshot-sheet.js
+test-parse.js
+test_detect.mjs
+test_improved.mjs
+test_verify.mjs
+diag_test.mjs
+diag2.mjs
+diag3.mjs
+diag4.mjs
+full_test.mjs
+test-results/
+
+# VexFlow raw source (bundle is in js/vexflow/vexflow.bundle.js)
+js/vexflow/src/
+js/vexflow/entry/
+js/vexflow/tests/
+
+# Test MIDI files (optional)
 # testmids/*.mid
 # testmids/*.midi
-
-# VexFlow raw source (bundle is already in js/vexflow/vexflow.bundle.js)
-# Uncomment to reduce repo size; npm install restores them
-# js/vexflow/src/
-# js/vexflow/entry/
-# js/vexflow/tests/
