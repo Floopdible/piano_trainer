@@ -91,6 +91,7 @@ class PitchDetector {
         this._dfNode = await this._df.createAudioWorkletNode(this._audioCtx);
       } catch (e) {
         console.warn('DeepFilterNet3 not available:', e.message);
+        this._dfNode = null;
       }
 
       this._analyser = this._audioCtx.createAnalyser();
@@ -158,7 +159,7 @@ class PitchDetector {
   }
 
   async setMode(mode) {
-    if (mode !== 'standard' && mode !== 'basic-pitch' && mode !== 'transkun' && mode !== 'kong') return;
+    if (mode !== 'standard' && mode !== 'basic-pitch' && mode !== 'transkun' && mode !== 'transkun-v2' && mode !== 'kong') return;
     this._mode = mode;
     if (this._isRunning) {
       this._rafId && cancelAnimationFrame(this._rafId);
@@ -167,6 +168,9 @@ class PitchDetector {
       }
       if (this._mode === 'transkun') {
         try { await this._loadTranskun(); } catch (e) { console.warn('Transkun unavailable:', e.message); this._mode = 'standard'; }
+      }
+      if (this._mode === 'transkun-v2') {
+        try { await this._loadTranskun('v2'); } catch (e) { console.warn('Transkun V2 unavailable:', e.message); this._mode = 'standard'; }
       }
       if (this._mode === 'kong') {
         try { await this._loadKong(); } catch (e) { console.warn('Kong unavailable:', e.message); this._mode = 'standard'; }
@@ -238,20 +242,22 @@ class PitchDetector {
       this._stream.getTracks().forEach(t => t.stop());
       this._stream = null;
     }
-    if (this._audioCtx && this._audioCtx.state !== 'closed') {
-      this._audioCtx.close().catch(() => {});
-      this._audioCtx = null;
-    }
+    if (this._df) { try { this._df.destroy(); } catch (e) {} this._df = null; }
+    this._dfNode = null;
     this._analyser = null;
     this._spectralAnalyser = null;
     this._spectralRaw = null;
     this._detector = null;
     this._buffer = null;
-    if (this._df) { try { this._df.destroy(); } catch (e) {} this._df = null; this._dfNode = null; }
     this._denoiser = null;
     this._bpModel = null;
     this._bpReady = false;
     this._bpProcessing = false;
+    // Close AudioContext last, after all nodes are released
+    if (this._audioCtx && this._audioCtx.state !== 'closed') {
+      this._audioCtx.close();
+      this._audioCtx = null;
+    }
   }
 
   setSensitivity(val) {
@@ -447,18 +453,30 @@ class PitchDetector {
       // Run inference
       const result = await this._bpPredict(resampled, this._bpModel, 256);
 
-      // Post-process: extract active notes from last output frame
+      // Post-process: extract active notes using Onsets-and-Frames trick
+      // Key insight (BShakhovsky/PianoTranscription_Android + Hawthorne 2018):
+      //   For each time step, take element-wise max(frames, onsets)
+      //   This boosts frame activations at note onsets, preventing
+      //   sustained notes from disappearing as their frame value decays.
+      //   Then take max over a short recent window (5 frames ≈ 58ms at 22050Hz)
+      //   for low-latency stable detection.
       let activeNotes = [];
-      if (result && result.noteActivations) {
-        const activations = result.noteActivations;
-        const lastIdx = activations.length - 1;
-        if (lastIdx >= 0) {
-          activeNotes = [];
-          for (let p = 0; p < Math.min(88, activations[lastIdx].length); p++) {
-            if (activations[lastIdx][p] >= 0.3) {
-              const midiNote = p + 21; // Basic Pitch output: 0 = A0 = MIDI 21
-              activeNotes.push(midiNote);
-            }
+      if (result && result.noteActivations && result.onsets) {
+        const frames = result.noteActivations;
+        const onsets = result.onsets;
+        const WINDOW = 5;
+        const startFrame = Math.max(0, frames.length - WINDOW);
+        for (let p = 0; p < 88; p++) {
+          let maxVal = 0;
+          for (let t = startFrame; t < frames.length; t++) {
+            const fVal = frames[t] && frames[t][p] || 0;
+            const oVal = onsets[t] && onsets[t][p] || 0;
+            const combined = fVal > oVal ? fVal : oVal;
+            if (combined > maxVal) maxVal = combined;
+          }
+          if (maxVal >= 0.3) {
+            const midiNote = p + 21; // Basic Pitch output: 0 = A0 = MIDI 21
+            activeNotes.push(midiNote);
           }
         }
       }
@@ -512,16 +530,23 @@ class PitchDetector {
     return out;
   }
 
-  async _loadTranskun() {
+  async _loadTranskun(version) {
+    version = version || 'v1';
     const ort = await import('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.all.min.mjs');
-    const configResp = await fetch('/models/transkun_config.json');
+    const configUrl = version === 'v2' ? '/models/transkun_v2_config.json' : '/models/transkun_config.json';
+    const modelUrl  = version === 'v2' ? '/models/transkun_v2.onnx'       : '/models/transkun.onnx';
+    const configResp = await fetch(configUrl);
     this._tkConfig = await configResp.json();
-    // Load ONNX model with external data support
-    this._tkSession = await ort.InferenceSession.create('/models/transkun.onnx');
+    this._tkSession = await ort.InferenceSession.create(modelUrl);
+    this._tkOrt = ort;
     this._tkBuffer = [];
     this._tkAllNotes = [];
     this._tkProcessing = false;
     this._tkReady = true;
+    this._tkVersion = version;
+    this._tkInputName  = version === 'v2' ? 'audio'           : 'audio_frames';
+    this._tkScoreName  = version === 'v2' ? 'score'           : 'score_matrices';
+    this._tkNoiseName  = version === 'v2' ? 'noise'           : 'context_features';
     this._tkDecoder = new TranskunDecoder(this._tkConfig);
   }
 
@@ -595,10 +620,11 @@ class PitchDetector {
       }
 
       // Run ONNX model
-      const inputTensor = new ort.Tensor('float32', inputAudio, [1, 1, segSamples]);
-      const results = await this._tkSession.run({ audio_frames: inputTensor });
-      const scoreMatrices = results.score_matrices.data;
-      const noiseScores = results.context_features.data;
+      const inputTensor = new this._tkOrt.Tensor('float32', inputAudio, [1, 1, segSamples]);
+      const feeds = { [this._tkInputName]: inputTensor };
+      const results = await this._tkSession.run(feeds);
+      const scoreMatrices = results[this._tkScoreName].data;
+      const noiseScores = results[this._tkNoiseName].data;
 
       // Decode with Viterbi
       const T = this._tkConfig.segmentSizeInSecond * fs / this._tkConfig.hopSize;
