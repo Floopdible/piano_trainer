@@ -123,6 +123,7 @@ class PianoTrainerApp {
       this._onUserGesture();
       this.fileInput.click();
     });
+    document.getElementById('btn-demo')?.addEventListener('click', () => this._startDemo());
 
     // Transport controls
     this.playPauseBtn.addEventListener('click', () => {
@@ -264,19 +265,9 @@ class PianoTrainerApp {
     document.addEventListener('mousemove', (e) => this._onDragMove(e));
     document.addEventListener('mouseup', () => this._onDragEnd());
 
-    // Waterfall zoom and scroll with mouse wheel
+    // Waterfall zoom and scroll with mouse wheel (disabled — caused crashes)
     waterfallCanvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      if (!this.midiData) return;
-      if (e.shiftKey) {
-        // Shift+wheel: scroll through time
-        const dt = e.deltaY > 0 ? 2 : -2;
-        this._seek(Math.max(0, Math.min(this.midiData.duration, this.currentTime + dt)));
-      } else {
-        // Wheel: zoom in/out
-        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-        this.pianoRenderer.pixelsPerSecond = Math.max(50, Math.min(800, this.pianoRenderer.pixelsPerSecond * zoomFactor));
-      }
     }, { passive: false });
 
     // Resizer between waterfall and sheet music
@@ -433,6 +424,26 @@ class PianoTrainerApp {
   _onUserGesture() {
     this._ensureAudio();
     this._ensurePianoLoaded();
+  }
+
+  async _startDemo() {
+    this._onUserGesture();
+    try {
+      const resp = await fetch('/demo/demo.mid');
+      const arrayBuffer = await resp.arrayBuffer();
+      this.midiData = this.midiParser.parse(arrayBuffer);
+      this.songInfoEl.textContent = 'River Flows In You — Yiruma';
+      this.welcomeOverlay.style.display = 'none';
+      this.resultsOverlay.classList.remove('visible');
+      this._stop();
+      this._resetScore();
+      this._updateUI();
+      this._ensurePianoLoaded();
+      this.statusText.textContent = `Loaded: ${this.midiData.notes.length} notes, ${this.midiData.measures.length} measures`;
+    } catch (e) {
+      console.error('Demo failed:', e);
+      this.statusText.textContent = 'Error: ' + e.message;
+    }
   }
 
   async _loadFile(file) {

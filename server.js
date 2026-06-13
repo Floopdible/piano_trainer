@@ -17,6 +17,7 @@ const MIME_TYPES = {
   '.jpg': 'image/jpeg',
   '.svg': 'image/svg+xml',
   '.wasm': 'application/wasm',
+  '.wav': 'audio/wav',
   '.onnx': 'application/octet-stream',
   '.gz': 'application/gzip',
   '.data': 'application/octet-stream',
