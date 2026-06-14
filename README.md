@@ -95,6 +95,10 @@ piano_trainer/
 └── server.js           — local dev server with MIME types
 ```
 
+## License
+
+GNU General Public License v3.0. See [LICENSE](LICENSE) for the full text.
+
 ## Browser Support
 
 Chrome, Firefox, Edge, Safari (14.5+).
