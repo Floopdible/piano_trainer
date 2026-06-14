@@ -2,6 +2,8 @@
 
 Mic-based piano practice app with MIDI playback, sheet music rendering, and real-time multi-note detection.
 
+![Logo](../logo-pianovex.svg)
+
 ## Features
 
 - **MIDI playback** — load any `.mid` file with separate left/right hands, playback controls (play/pause/stop/loop), tempo slider, and per-hand mute/solo
@@ -88,6 +90,7 @@ piano_trainer/
 │   ├── midi-parser.js  — MIDI file parser
 │   └── transkun-decoder.js — CRF decoder for Transkun model
 ├── models/             — ONNX models + DeepFilterNet3 assets
+├── favicon-*.png       — favicon at 16/32/48/64/128/192/256/512px
 ├── scripts/            — ONNX export scripts (PyTorch)
 └── server.js           — local dev server with MIME types
 ```
