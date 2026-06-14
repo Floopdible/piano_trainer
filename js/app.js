@@ -36,7 +36,7 @@ class PianoTrainerApp {
     this.audioCtx = null;
     this.pianoPlayer = null;
     this.pianoLoading = false;
-    this.masterVolume = 80;
+    this.masterVolume = 50;
     this.playbackNotes = new Map();
     this.soundEnabled = true;
     this.soundedNotes = new Map();
@@ -1013,7 +1013,7 @@ class PianoTrainerApp {
     if (this.pianoPlayer) {
       this.pianoPlayer.play(noteNum, this.audioCtx.currentTime, {
         duration: Math.min(duration, 4),
-        gain: Math.max(0.05, velocity * 0.3) * (this.masterVolume / 50),
+        gain: Math.max(0.05, velocity * 0.3) * (this.masterVolume / 5),
       });
       return;
     }
@@ -1156,7 +1156,7 @@ class PianoTrainerApp {
     if (this.pianoPlayer) {
       this.pianoPlayer.play(noteNum, this.audioCtx.currentTime, {
         duration: 1.5,
-        gain: 0.2 * (this.masterVolume / 50),
+        gain: 0.2 * (this.masterVolume / 5),
       });
       return;
     }

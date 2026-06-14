@@ -111,6 +111,37 @@ class SheetMusicRenderer {
       }
     }
 
+    const continuations = [];
+    for (const note of notes) {
+      const mIdx = this._findMeasureIndex(note.startTick, measures);
+      if (mIdx < 0 || mIdx >= measures.length - 1) continue;
+      const mEnd = measures[mIdx].endTick;
+      if (note.endTick <= mEnd) continue;
+
+      note._cappedEndTick = mEnd;
+      const remainingDur = note.endTick - mEnd;
+      const cont = {
+        track: note.track,
+        channel: note.channel,
+        noteNumber: note.noteNumber,
+        velocity: note.velocity,
+        hand: note.hand,
+        startTick: mEnd,
+        endTick: note.endTick,
+        startTime: this._tickToTimeLocal(mEnd, ticksPerBeat, midiData.tempoMap),
+        endTime: note.endTime,
+        duration: note.endTime - this._tickToTimeLocal(mEnd, ticksPerBeat, midiData.tempoMap),
+        durationTicks: remainingDur,
+        id: note.id + '-cont'
+      };
+      continuations.push({ note: cont, measureIndex: mIdx + 1 });
+    }
+    for (const { note: cont, measureIndex } of continuations) {
+      if (measureIndex < notesByMeasure.length) {
+        notesByMeasure[measureIndex][cont.hand].push(cont);
+      }
+    }
+
     const hasRight = notes.some(n => n.hand === 'right');
     const hasLeft = notes.some(n => n.hand === 'left');
 
@@ -143,11 +174,12 @@ class SheetMusicRenderer {
 
     const measureWidths = [];
     for (let i = 0; i < measures.length; i++) {
+      const mEnd = measures[i].endTick;
       const rightNotesVF = this._createVFNotes(
-        notesByMeasure[i].right, clefByMeasure.right[i], useFlats, ticksPerBeat, keySigStr, octaveShiftByMeasure.right[i]
+        notesByMeasure[i].right, clefByMeasure.right[i], useFlats, ticksPerBeat, keySigStr, octaveShiftByMeasure.right[i], mEnd
       );
       const leftNotesVF = this._createVFNotes(
-        notesByMeasure[i].left, clefByMeasure.left[i], useFlats, ticksPerBeat, keySigStr, octaveShiftByMeasure.left[i]
+        notesByMeasure[i].left, clefByMeasure.left[i], useFlats, ticksPerBeat, keySigStr, octaveShiftByMeasure.left[i], mEnd
       );
 
       let minWidth = 100;
@@ -300,6 +332,8 @@ class SheetMusicRenderer {
       this.svg.style.transition = 'none';
     }
 
+    this._prevMeasureVFNotes = null;
+
     let y = Math.max(10, (this.height - systemHeight) / 2);
     if (!renderTreble && renderBass) {
       y = Math.max(10, (this.height - 90) / 2);
@@ -373,21 +407,52 @@ class SheetMusicRenderer {
         rightLine.setContext(context).draw();
       }
 
+      let rightNotes = [], leftNotes = [];
       if (renderTreble) {
-        const rightNotes = this._createVFNotes(
-          notesByMeasure[i].right, rightClef, useFlats, ticksPerBeat, keySigStr, rightShift
+        rightNotes = this._createVFNotes(
+          notesByMeasure[i].right, rightClef, useFlats, ticksPerBeat, keySigStr, rightShift, m.endTick
         );
         this._drawVoice(context, trebleStave, rightNotes, ticksPerBeat, 'right', m.numerator, m.denominator, rightShift, rightStartPassage);
       }
       if (renderBass) {
-        const leftNotes = this._createVFNotes(
-          notesByMeasure[i].left, leftClef, useFlats, ticksPerBeat, keySigStr, leftShift
+        leftNotes = this._createVFNotes(
+          notesByMeasure[i].left, leftClef, useFlats, ticksPerBeat, keySigStr, leftShift, m.endTick
         );
         this._drawVoice(context, bassStave, leftNotes, ticksPerBeat, 'left', m.numerator, m.denominator, leftShift, leftStartPassage);
       }
 
+      if (this._prevMeasureVFNotes) {
+        const prev = this._prevMeasureVFNotes;
+        const curRight = rightNotes;
+        const curLeft = leftNotes;
+        const ties = [];
+
+        for (const n of prev.right) {
+          if (n.noteData.endTick > m.startTick) {
+            const match = curRight.find(c => c.noteData.startTick === m.startTick && c.noteData.noteNumber === n.noteData.noteNumber);
+            if (match) {
+              ties.push(new VF.StaveTie({ first_note: n, last_note: match, first_indices: [0], last_indices: [0] }));
+            }
+          }
+        }
+        for (const n of prev.left) {
+          if (n.noteData.endTick > m.startTick) {
+            const match = curLeft.find(c => c.noteData.startTick === m.startTick && c.noteData.noteNumber === n.noteData.noteNumber);
+            if (match) {
+              ties.push(new VF.StaveTie({ first_note: n, last_note: match, first_indices: [0], last_indices: [0] }));
+            }
+          }
+        }
+        ties.forEach(t => t.setContext(context).draw());
+      }
+      this._prevMeasureVFNotes = { right: rightNotes, left: leftNotes };
+
+      const noteStartX = renderTreble
+        ? trebleStave.getNoteStartX()
+        : bassStave.getNoteStartX();
+
       this.measurePositions.push({
-        x, y, width,
+        x, y, width, noteStartX,
         startTick: m.startTick,
         endTick: m.endTick
       });
@@ -505,7 +570,7 @@ class SheetMusicRenderer {
     return map;
   }
 
-  _createVFNotes(notes, clef, useFlats, ticksPerBeat, keySigStr, octaveShift = 0) {
+  _createVFNotes(notes, clef, useFlats, ticksPerBeat, keySigStr, octaveShift = 0, measureEndTick) {
     const VF = Vex.Flow;
     const chords = new Map();
     for (const note of notes) {
@@ -530,7 +595,9 @@ class SheetMusicRenderer {
         }
       }
       const maxRawDur = Math.max(...unique.map(n => n.durationTicks));
-      const nextTick = ci < sortedTicks.length - 1 ? sortedTicks[ci + 1] : startTick + maxRawDur;
+      const nextTick = ci < sortedTicks.length - 1
+        ? sortedTicks[ci + 1]
+        : Math.min(startTick + maxRawDur, measureEndTick !== undefined ? measureEndTick : Infinity);
       const effectiveDur = Math.min(maxRawDur, nextTick - startTick);
       const durInfo = this._getVFDuration(effectiveDur, ticksPerBeat);
       const duration = durInfo.val;
@@ -665,10 +732,20 @@ class SheetMusicRenderer {
     for (let i = 0; i < measures.length; i++) {
       if (tick >= measures[i].startTick && tick < measures[i].endTick) return i;
     }
-    if (measures.length > 0 && tick >= measures[measures.length - 1].endTick) {
-      return measures.length - 1;
-    }
     return -1;
+  }
+
+  _tickToTimeLocal(tick, ticksPerBeat, tempoMap) {
+    let time = 0;
+    let lastTick = 0;
+    let usPerBeat = tempoMap[0].microsecondsPerBeat;
+    for (const evt of tempoMap) {
+      if (evt.tick >= tick) break;
+      time += ((evt.tick - lastTick) / ticksPerBeat) * (usPerBeat / 1000000);
+      lastTick = evt.tick;
+      usPerBeat = evt.microsecondsPerBeat;
+    }
+    return time + ((tick - lastTick) / ticksPerBeat) * (usPerBeat / 1000000);
   }
 
   _timeToTick(time, midiData) {
@@ -722,12 +799,14 @@ class SheetMusicRenderer {
     if (!cursor) {
       cursor = document.createElement('div');
       cursor.className = 'sheet-cursor';
-      cursor.style.cssText = 'position:absolute;top:0;bottom:0;width:2px;background:rgba(74,122,255,0.5);pointer-events:none;z-index:10;';
+      cursor.style.cssText = 'position:absolute;top:0;bottom:0;width:2px;background:rgba(74,122,255,0.5);pointer-events:none;z-index:10;left:0;will-change:transform;';
       this.container.appendChild(cursor);
     }
 
-    const measureProgress = (currentTick - currentMeasure.startTick) / (currentMeasure.endTick - currentMeasure.startTick);
-    cursor.style.left = (currentMeasure.x + measureProgress * currentMeasure.width) + 'px';
+    const measureTicks = currentMeasure.endTick - currentMeasure.startTick;
+    const contentWidth = (currentMeasure.x + currentMeasure.width) - currentMeasure.noteStartX;
+    const measureProgress = (currentTick - currentMeasure.startTick) / measureTicks;
+    cursor.style.transform = 'translateX(' + Math.round(currentMeasure.noteStartX + measureProgress * contentWidth) + 'px)';
     cursor.style.top = '5px';
     cursor.style.height = (this.height - 10) + 'px';
   }
